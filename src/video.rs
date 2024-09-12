@@ -33,7 +33,8 @@ use video_rs::{Decoder, Location, Time};
 pub(crate) struct Internal {
     pub(crate) id: u64,
 
-    pub(crate) source: Decoder,
+    // is this really the best solution?
+    pub(crate) source: Arc<Mutex<Decoder>>,
 
     pub(crate) width: u32,
     pub(crate) height: u32,
@@ -41,7 +42,7 @@ pub(crate) struct Internal {
 
     pub(crate) duration: Time,
 
-    timestamp: Time,
+    pub timestamp: Arc<Mutex<Time>>,
 
     // Really ???
     pub(crate) frame: Arc<Mutex<Vec<u8>>>, // ideally would be Arc<Mutex<[T]>>
@@ -57,24 +58,26 @@ pub(crate) struct Internal {
 }
 
 impl Internal {
-    pub(crate) fn seek(&mut self, position: impl Into<Position>) -> Result<(), Error> {
+    pub(crate) fn seek(&self, position: impl Into<Position>) -> Result<(), Error> {
+        let mut source = self.source.lock()?;
         match position.into() {
             Position::Time(dur) => {
                 let millis = dur.as_millis();
                 let int: i64 = millis.try_into()?;
-                self.source.seek(int)?;
+                source.seek(int)?;
             }
             Position::Frame(frame) => {
-                self.source.seek_to_frame(frame)?;
+                source.seek_to_frame(frame)?;
             }
         }
         Ok(())
     }
 
     pub(crate) fn restart_stream(&mut self) -> Result<(), Error> {
-        // self.is_eos = false;
         self.set_paused(false);
-        self.source.seek_to_start()?;
+        let mut source = self.source.lock()?;
+        // self.is_eos = false;
+        source.seek_to_start()?;
         Ok(())
     }
 
@@ -98,6 +101,9 @@ impl Video {
     /// Create a new video player from a given video which loads from `uri`.
     /// Note that live sourced will report the duration to be zero.
     pub fn new(uri: &url::Url) -> Result<Self, Error> {
+        // ffmpeg settings setup?
+        video_rs::init()?;
+
         let id = VIDEO_ID.fetch_add(1, Ordering::SeqCst);
         let path: Location = uri.into();
         let source = Decoder::new(path)?;
@@ -117,9 +123,9 @@ impl Video {
 
         Ok(Video(RefCell::new(Internal {
             id,
-            source,
+            source: Arc::new(Mutex::new(source)),
             upload_frame: Arc::new(upload),
-            timestamp: Time::zero(),
+            timestamp: Arc::new(Mutex::new(Time::zero())),
             width,
             height,
             duration,
@@ -171,7 +177,8 @@ impl Video {
     /// TODO:
     pub fn position(&self) -> Duration {
         let inner = self.0.borrow();
-        let ts = inner.timestamp.as_secs_f64();
+        let time = inner.timestamp.lock().unwrap();
+        let ts = time.as_secs_f64();
         Duration::from_secs_f64(ts)
     }
 

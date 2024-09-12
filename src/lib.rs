@@ -45,6 +45,8 @@ mod pipeline;
 mod video;
 mod video_player;
 
+use std::sync::PoisonError;
+
 use thiserror::Error;
 
 pub use video::Position;
@@ -61,6 +63,20 @@ pub enum Error {
     Conversion(#[from] std::num::TryFromIntError),
     #[error("{0}")]
     GenericVideo(#[from] video_rs::error::Error),
+    #[error("mutex poisoned")]
+    Concurrency,
     #[error("unknown error occured")]
     Unknown,
+}
+
+impl<T> From<PoisonError<T>> for Error {
+    fn from(_value: PoisonError<T>) -> Self {
+        Self::Concurrency
+    }
+}
+
+impl From<Box<dyn std::error::Error>> for Error {
+    fn from(_value: Box<dyn std::error::Error>) -> Self {
+        Self::Unknown
+    }
 }

@@ -4,6 +4,7 @@ use iced::{
 };
 use iced_video_player::{Video, VideoPlayer};
 use std::time::Duration;
+use url::Url;
 
 fn main() {
     App::run(Default::default()).unwrap();
@@ -29,15 +30,9 @@ impl Sandbox for App {
 
     fn new() -> Self {
         let video = Video::new(
-            &url::Url::from_file_path(
-                std::path::PathBuf::from(file!())
-                    .parent()
-                    .unwrap()
-                    .join("../.media/test.mp4")
-                    .canonicalize()
-                    .unwrap(),
-            )
-            .unwrap(),
+            &"http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+                .parse::<Url>()
+                .unwrap(),
         )
         .unwrap();
         App {

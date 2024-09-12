@@ -4,9 +4,11 @@ use iced::{
     Element,
 };
 use iced_wgpu::primitive::pipeline::Renderer as PrimitiveRenderer;
-use std::{marker::PhantomData, sync::atomic::Ordering};
+use std::{
+    marker::PhantomData,
+    sync::{atomic::Ordering, Mutex},
+};
 use std::{sync::Arc, time::Duration};
-use tracing::error;
 
 /// Video player widget which displays the current frame of a [`Video`](crate::Video).
 pub struct VideoPlayer<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
@@ -110,11 +112,18 @@ where
         _viewport: &iced::Rectangle,
     ) {
         let inner = self.video.0.borrow();
+        let mut decoder = inner.source.lock().unwrap();
+        let mut timestamp = inner.timestamp.lock().unwrap();
+        let (time, frame) = decoder.decode().unwrap();
+        let actual = frame.as_slice().unwrap().to_vec();
+        let wrapped = Arc::new(Mutex::new(actual));
+        *timestamp = time;
         renderer.draw_pipeline_primitive(
             layout.bounds(),
             VideoPrimitive::new(
                 inner.id,
-                Arc::clone(&inner.frame),
+                // Arc::clone(&inner.frame),
+                wrapped,
                 (inner.width as _, inner.height as _),
                 inner.upload_frame.swap(false, Ordering::SeqCst),
             ),
