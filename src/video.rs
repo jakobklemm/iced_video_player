@@ -1,9 +1,11 @@
 use crate::Error;
+use ffmpeg_next::format::Pixel;
 use iced::widget::image as img;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
+use tracing::info;
 
 /// Position in the media.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -42,7 +44,8 @@ pub(crate) struct Internal {
 
     pub(crate) duration: Time,
 
-    pub timestamp: Arc<Mutex<Time>>,
+    pub timestamp: Arc<Mutex<i64>>,
+    pub format: Pixel,
 
     // Really ???
     pub(crate) frame: Arc<Mutex<Vec<u8>>>, // ideally would be Arc<Mutex<[T]>>
@@ -106,7 +109,7 @@ impl Video {
 
         let id = VIDEO_ID.fetch_add(1, Ordering::SeqCst);
         let path: Location = uri.into();
-        let source = Decoder::new(path)?;
+        let mut source = Decoder::new(path)?;
         // check if maybe 'size' instead of 'size_out'
         let (width, height) = source.size_out();
         let framerate = source.frame_rate();
@@ -116,8 +119,18 @@ impl Video {
             return Err(Error::Unknown);
         }
         let frame_buf = vec![0; (width * height * 4) as _];
+        let frame = source.decode_raw()?;
+        let format = frame.format();
         let frame = Arc::new(Mutex::new(frame_buf));
         let frame_ref = Arc::clone(&frame);
+
+        info!(
+            message = "creating video element",
+            framerate,
+            width,
+            height,
+            ?duration
+        );
 
         let upload = AtomicBool::new(true);
 
@@ -125,8 +138,9 @@ impl Video {
             id,
             source: Arc::new(Mutex::new(source)),
             upload_frame: Arc::new(upload),
-            timestamp: Arc::new(Mutex::new(Time::zero())),
+            timestamp: Arc::new(Mutex::new(0)),
             width,
+            format,
             height,
             duration,
             frame,
@@ -178,8 +192,9 @@ impl Video {
     pub fn position(&self) -> Duration {
         let inner = self.0.borrow();
         let time = inner.timestamp.lock().unwrap();
-        let ts = time.as_secs_f64();
-        Duration::from_secs_f64(ts)
+        let time = time.clone();
+        // TODO: Can panic
+        Duration::from_millis(time as u64)
     }
 
     /// Get the media duration.

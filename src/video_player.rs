@@ -1,4 +1,6 @@
 use crate::{pipeline::VideoPrimitive, video::Video};
+use ffmpeg_next::frame::Video as FVideo;
+// use ffmpeg_next::{software::scaling::context::Context, util::frame::video::Video};
 use iced::{
     advanced::{self, graphics::core::event::Status, layout, widget, Widget},
     Element,
@@ -9,6 +11,8 @@ use std::{
     sync::{atomic::Ordering, Mutex},
 };
 use std::{sync::Arc, time::Duration};
+use tracing::{error, info};
+use video_rs::ffmpeg::{codec::Flags, format::Pixel};
 
 /// Video player widget which displays the current frame of a [`Video`](crate::Video).
 pub struct VideoPlayer<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
@@ -114,8 +118,15 @@ where
         let inner = self.video.0.borrow();
         let mut decoder = inner.source.lock().unwrap();
         let mut timestamp = inner.timestamp.lock().unwrap();
-        let (time, frame) = decoder.decode().unwrap();
-        let actual = frame.as_slice().unwrap().to_vec();
+        let mut frame = decoder.decode_raw().unwrap();
+        let mut scaler = frame.converter(Pixel::RGBA).unwrap();
+        let mut rgbframe = FVideo::empty();
+        let time = frame.timestamp().unwrap();
+        let _ = scaler.run(&mut frame, &mut rgbframe).unwrap();
+        // somehow 0 is just the right index?
+        // https://docs.rs/ffmpeg-next/7.0.4/src/dump_frames/dump-frames.rs.html#64
+        let frame = rgbframe.data(0);
+        let actual = frame.to_vec();
         let wrapped = Arc::new(Mutex::new(actual));
         *timestamp = time;
         renderer.draw_pipeline_primitive(
