@@ -4,9 +4,18 @@ use iced::{
 };
 use iced_video_player::{Video, VideoPlayer};
 use std::time::Duration;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
 fn main() {
+    let _ = tracing_subscriber::fmt()
+        .with_ansi(true)
+        .pretty()
+        .with_thread_names(true)
+        .with_line_number(true)
+        .with_file(true)
+        .init();
+
     App::run(Default::default()).unwrap();
 }
 
