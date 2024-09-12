@@ -1,13 +1,12 @@
 use crate::{pipeline::VideoPrimitive, video::Video};
-use gstreamer as gst;
 use iced::{
     advanced::{self, graphics::core::event::Status, layout, widget, Widget},
     Element,
 };
 use iced_wgpu::primitive::pipeline::Renderer as PrimitiveRenderer;
-use log::error;
 use std::{marker::PhantomData, sync::atomic::Ordering};
 use std::{sync::Arc, time::Duration};
+use tracing::error;
 
 /// Video player widget which displays the current frame of a [`Video`](crate::Video).
 pub struct VideoPlayer<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
@@ -136,51 +135,11 @@ where
         let mut inner = self.video.0.borrow_mut();
 
         if let iced::Event::Window(_, iced::window::Event::RedrawRequested(now)) = event {
-            if inner.restart_stream || (!inner.is_eos && !inner.paused) {
-                let mut restart_stream = false;
-                if inner.restart_stream {
-                    restart_stream = true;
-                    // Set flag to false to avoid potentially multiple seeks
-                    inner.restart_stream = false;
-                }
-                let mut eos_pause = false;
-
-                for msg in inner.bus.iter() {
-                    match msg.view() {
-                        gst::MessageView::Error(err) => {
-                            error!("bus returned an error: {err}");
-                            if let Some(ref on_error) = self.on_error {
-                                shell.publish(on_error(&err.error()))
-                            };
-                        }
-                        gst::MessageView::Eos(_eos) => {
-                            if let Some(on_end_of_stream) = self.on_end_of_stream.clone() {
-                                shell.publish(on_end_of_stream);
-                            }
-                            if inner.looping {
-                                restart_stream = true;
-                            } else {
-                                eos_pause = true;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                // Don't run eos_pause if restart_stream is true; fixes "pausing" after restarting a stream
-                if restart_stream {
-                    if let Err(err) = inner.restart_stream() {
-                        error!("cannot restart stream (can't seek): {err:#?}")
-                    }
-                } else if eos_pause {
-                    inner.is_eos = true;
-                    inner.set_paused(true);
-                }
-
+            if !inner.is_eos && !inner.paused {
                 let redraw_interval = 1.0 / inner.framerate;
                 let until_redraw =
-                    redraw_interval - (now - inner.next_redraw).as_secs_f64() % redraw_interval;
-                inner.next_redraw = now + Duration::from_secs_f64(until_redraw);
+                    redraw_interval - (now - inner.next_redraw).as_secs_f32() % redraw_interval;
+                inner.next_redraw = now + Duration::from_secs_f32(until_redraw);
                 shell.request_redraw(iced::window::RedrawRequest::At(inner.next_redraw));
 
                 if let Some(on_new_frame) = self.on_new_frame.clone() {

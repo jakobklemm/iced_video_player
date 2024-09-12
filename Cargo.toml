@@ -19,28 +19,11 @@ exclude = [
 iced = { version = "0.12", features = ["image", "advanced", "wgpu"] } 
 iced_native = "0.10"
 iced_wgpu = "0.12"
-gstreamer = "0.22" 
-gstreamer-app = "0.22" # appsink 
-gstreamer-base = "0.22" # basesrc
 glib = "0.19" # gobject traits and error type
-log = "0.4"
 thiserror = "1" 
 url = "2" # media uri
-
-[package.metadata.nix]
-systems = ["x86_64-linux"]
-app = true
-build = true
-runtimeLibs = [
-    "vulkan-loader",
-    "wayland",
-    "wayland-protocols",
-    "libxkbcommon",
-    "xorg.libX11",
-    "xorg.libXrandr",
-    "xorg.libXi", "gst_all_1.gstreamer", "gst_all_1.gstreamermm", "gst_all_1.gst-plugins-bad", "gst_all_1.gst-plugins-ugly", "gst_all_1.gst-plugins-good", "gst_all_1.gst-plugins-base",
-]
-buildInputs = ["libxkbcommon", "gst_all_1.gstreamer", "gst_all_1.gstreamermm", "gst_all_1.gst-plugins-bad", "gst_all_1.gst-plugins-ugly", "gst_all_1.gst-plugins-good", "gst_all_1.gst-plugins-base"]
+video-rs = { version = "0.9.0", features = ["ndarray"] }
+tracing = "0.1.40"
 
 [package.metadata.docs.rs]
 rustc-args = ["--cfg", "docsrs"]

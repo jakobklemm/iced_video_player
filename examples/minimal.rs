@@ -12,7 +12,6 @@ fn main() {
 #[derive(Clone, Debug)]
 enum Message {
     TogglePause,
-    ToggleLoop,
     Seek(f64),
     SeekRelease,
     EndOfStream,
@@ -57,9 +56,6 @@ impl Sandbox for App {
             Message::TogglePause => {
                 self.video.set_paused(!self.video.paused());
             }
-            Message::ToggleLoop => {
-                self.video.set_looping(!self.video.looping());
-            }
             Message::Seek(secs) => {
                 self.dragging = true;
                 self.video.set_paused(true);
@@ -100,14 +96,6 @@ impl Sandbox for App {
                             "Pause"
                         }))
                         .on_press(Message::TogglePause),
-                    )
-                    .push(
-                        Button::new(Text::new(if self.video.looping() {
-                            "Disable Loop"
-                        } else {
-                            "Enable Loop"
-                        }))
-                        .on_press(Message::ToggleLoop),
                     )
                     .push(Text::new(format!(
                         "{:#?}s / {:#?}s",
