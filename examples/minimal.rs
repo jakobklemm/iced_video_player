@@ -38,12 +38,14 @@ impl Sandbox for App {
     type Message = Message;
 
     fn new() -> Self {
-        let video = Video::new(
-            &"http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-                .parse::<Url>()
-                .unwrap(),
-        )
-        .unwrap();
+        // let video = Video::new(
+        //     &"http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+        //         .parse::<Url>()
+        //         .unwrap(),
+        // )
+        // .unwrap();
+        let video =
+            Video::new(&"file:/home/jeykey/Videos/video.mp4".parse::<Url>().unwrap()).unwrap();
         App {
             video,
             position: 0.0,

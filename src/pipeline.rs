@@ -1,6 +1,7 @@
 use iced_wgpu::primitive::pipeline::Primitive;
 use iced_wgpu::wgpu;
 use std::{
+    borrow::Borrow,
     collections::BTreeMap,
     sync::{Arc, Mutex},
 };
@@ -265,13 +266,13 @@ impl VideoPipeline {
 #[derive(Debug, Clone)]
 pub(crate) struct VideoPrimitive {
     video_id: u64,
-    frame: Vec<u8>,
+    frame: Arc<[u8]>,
     size: (u32, u32),
     upload_frame: bool,
 }
 
 impl VideoPrimitive {
-    pub fn new(video_id: u64, frame: Vec<u8>, size: (u32, u32), upload_frame: bool) -> Self {
+    pub fn new(video_id: u64, frame: Arc<[u8]>, size: (u32, u32), upload_frame: bool) -> Self {
         VideoPrimitive {
             video_id,
             frame,
@@ -298,12 +299,13 @@ impl Primitive for VideoPrimitive {
 
         let pipeline = storage.get_mut::<VideoPipeline>().unwrap();
         // let data = self.frame.lock().expect("lock frame mutex");
-        let frame = self.frame.as_slice();
-        let first = &frame[0..16];
-        let length = frame.len();
+        // let frame = self.frame.as_slice();
         if self.upload_frame {
             // info!(message = "preparing frame draw", data = ?first, length);
+            let frame = self.frame.borrow();
             pipeline.upload(device, queue, self.video_id, self.size, frame);
+        } else {
+            info!(message = "upload frame is false");
         }
 
         pipeline.prepare(queue, self.video_id, bounds);

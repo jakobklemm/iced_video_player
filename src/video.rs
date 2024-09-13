@@ -1,12 +1,14 @@
 use crate::Error;
 use ffmpeg_next::format::Pixel;
+use ffmpeg_next::frame::Video as FVideo;
 use ffmpeg_next::Rational;
 use iced::widget::image as img;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::{Duration, Instant};
-use tracing::info;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tracing::{info, instrument};
+use video_rs::hwaccel::HardwareAccelerationDeviceType;
 
 /// Position in the media.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -37,20 +39,20 @@ pub(crate) struct Internal {
     pub(crate) id: u64,
 
     // is this really the best solution?
-    pub(crate) source: Arc<Mutex<Decoder>>,
+    //pub(crate) source: Arc<Mutex<Decoder>>,
+    pub(crate) source: Decoder,
 
     pub(crate) width: u32,
     pub(crate) height: u32,
-    pub(crate) framerate: f32,
+    pub(crate) framerate: f64,
 
     pub(crate) duration: Time,
 
-    pub timestamp: i64,
-    //pub timestamp: Duration,
-    // pub timebase: Rational,
+    pub timestamp: Time,
+    pub timebase: Rational,
 
     // Really ???
-    pub(crate) frame: Vec<u8>, // ideally would be Arc<Mutex<[T]>>
+    pub(crate) frame: Arc<[u8]>,
     pub(crate) upload_frame: Arc<AtomicBool>,
 
     // pub(crate) wait: mpsc::Receiver<()>,
@@ -62,17 +64,29 @@ pub(crate) struct Internal {
     pub(crate) next_redraw: Instant,
 }
 
+use std::fmt::Debug;
+impl Debug for Internal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let id = self.id;
+        let width = self.width;
+        let height = self.height;
+        let rate = self.framerate;
+        let dur = self.duration;
+        let pos = self.timestamp.as_secs_f64();
+        write!(f, "Internal id={id}, width={width}, height={height}, rate={rate}, duration={dur}, timestamp={pos}")
+    }
+}
+
 impl Internal {
-    pub(crate) fn seek(&self, position: impl Into<Position>) -> Result<(), Error> {
-        let mut source = self.source.lock()?;
+    pub(crate) fn seek(&mut self, position: impl Into<Position>) -> Result<(), Error> {
         match position.into() {
             Position::Time(dur) => {
                 let millis = dur.as_millis();
                 let int: i64 = millis.try_into()?;
-                source.seek(int)?;
+                self.source.seek(int)?;
             }
             Position::Frame(frame) => {
-                source.seek_to_frame(frame)?;
+                self.source.seek_to_frame(frame)?;
             }
         }
         Ok(())
@@ -80,14 +94,34 @@ impl Internal {
 
     pub(crate) fn restart_stream(&mut self) -> Result<(), Error> {
         self.set_paused(false);
-        let mut source = self.source.lock()?;
         // self.is_eos = false;
-        source.seek_to_start()?;
+        self.source.seek_to_start()?;
         Ok(())
     }
 
     pub(crate) fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
+    }
+
+    #[instrument]
+    pub(crate) fn next_frame(&mut self) -> Result<(), Error> {
+        let start = Instant::now();
+        let mut frame = self.source.decode_raw()?;
+        let pts = frame.pts();
+        let mut scaler = frame.converter(Pixel::RGBA).unwrap();
+        let mut converted = FVideo::empty();
+        let _ = scaler.run(&mut frame, &mut converted).unwrap();
+        let time = Time::new(pts, self.timebase);
+        self.timestamp = time;
+        // TODO: try if &[u8] is possible
+        self.frame = converted.data(0).to_vec().into();
+        self.upload_frame.swap(true, Ordering::SeqCst);
+        let end = Instant::now();
+        let dur = end - start;
+        let mil = dur.as_millis();
+        let dur = dur.as_secs_f64();
+        info!(message = "new frame", time = ?dur, millis = ?mil);
+        Ok(())
     }
 }
 
@@ -105,16 +139,16 @@ static VIDEO_ID: AtomicU64 = AtomicU64::new(0);
 impl Video {
     /// Create a new video player from a given video which loads from `uri`.
     /// Note that live sourced will report the duration to be zero.
+    #[instrument]
     pub fn new(uri: &url::Url) -> Result<Self, Error> {
         // ffmpeg settings setup?
         video_rs::init()?;
 
         let id = VIDEO_ID.fetch_add(1, Ordering::SeqCst);
         let path: Location = uri.into();
-        let mut source = Decoder::new(path)?;
-        // check if maybe 'size' instead of 'size_out'
+        let source = Decoder::new(path)?;
         let (width, height) = source.size_out();
-        let framerate = source.frame_rate();
+        let framerate = source.frame_rate() as f64;
         let duration = source.duration()?;
         if !duration.has_value() {
             // maybe live / not real?
@@ -123,12 +157,12 @@ impl Video {
         // let frame_buf = vec![0; (width * height * 4) as _];
         // let frame = source.decode_raw()?;
         // let frame = Arc::new(Mutex::new(frame_buf));
-        let timestamp = 0;
-        // let timebase = source.time_base();
-        // let frame_ref = Arc::clone(&frame);
+        let timebase = source.time_base();
+        let timestamp = Time::new(None, timebase.clone());
 
         info!(
             message = "creating video element",
+            id,
             framerate,
             width,
             height,
@@ -137,18 +171,18 @@ impl Video {
 
         let upload = AtomicBool::new(true);
         let count = width * height * 4;
+        let frame = Vec::with_capacity(count as usize);
 
         Ok(Video(RefCell::new(Internal {
             id,
-            source: Arc::new(Mutex::new(source)),
+            source,
             upload_frame: Arc::new(upload),
             timestamp,
-            // timestamp: Duration::from_millis(0),
-            // timebase,
+            timebase,
             width,
             height,
             duration,
-            frame: Vec::with_capacity(count as usize),
+            frame: frame.into(),
             framerate,
             paused: false,
             is_eos: false,
@@ -164,7 +198,7 @@ impl Video {
 
     /// Get the framerate of the video as frames per second.
     #[inline(always)]
-    pub fn framerate(&self) -> f32 {
+    pub fn framerate(&self) -> f64 {
         self.0.borrow().framerate
     }
 
@@ -195,15 +229,15 @@ impl Video {
     /// Get the current playback position in time.
     pub fn position(&self) -> Duration {
         let inner = self.0.borrow();
-        let rate = inner.framerate;
-        let data = inner.timestamp as f32;
-        let time = data / rate;
-        Duration::from_secs_f32(time)
+        inner.timestamp.into()
     }
 
     /// Get the media duration.
     #[inline(always)]
-    pub fn duration(&self) -> Time {
-        self.0.borrow().duration
+    pub fn duration(&self) -> Duration {
+        let dur: Duration = self.0.borrow().duration.into();
+        let fl = dur.as_secs_f64();
+        let round = fl.round();
+        Duration::from_secs_f64(round)
     }
 }
