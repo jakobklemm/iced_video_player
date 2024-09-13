@@ -1,4 +1,4 @@
-use crate::{pipeline::VideoPrimitive, video::Video};
+use crate::{pipeline::VideoPrimitive, video::Video, Position};
 use ffmpeg_next::frame::Video as FVideo;
 // use ffmpeg_next::{software::scaling::context::Context, util::frame::video::Video};
 use iced::{
@@ -116,25 +116,13 @@ where
         _viewport: &iced::Rectangle,
     ) {
         let inner = self.video.0.borrow();
-        let mut decoder = inner.source.lock().unwrap();
-        let mut timestamp = inner.timestamp.lock().unwrap();
-        let mut frame = decoder.decode_raw().unwrap();
-        let mut scaler = frame.converter(Pixel::RGBA).unwrap();
-        let mut rgbframe = FVideo::empty();
-        let time = frame.timestamp().unwrap();
-        let _ = scaler.run(&mut frame, &mut rgbframe).unwrap();
-        // somehow 0 is just the right index?
-        // https://docs.rs/ffmpeg-next/7.0.4/src/dump_frames/dump-frames.rs.html#64
-        let frame = rgbframe.data(0);
-        let actual = frame.to_vec();
-        let wrapped = Arc::new(Mutex::new(actual));
-        *timestamp = time;
         renderer.draw_pipeline_primitive(
             layout.bounds(),
             VideoPrimitive::new(
                 inner.id,
-                // Arc::clone(&inner.frame),
-                wrapped,
+                // TODO: Very bad
+                inner.frame.clone(),
+                // wrapped,
                 (inner.width as _, inner.height as _),
                 inner.upload_frame.swap(false, Ordering::SeqCst),
             ),
@@ -156,6 +144,31 @@ where
 
         if let iced::Event::Window(_, iced::window::Event::RedrawRequested(now)) = event {
             if !inner.is_eos && !inner.paused {
+                let frame = {
+                    // let mut previous = inner.frame.lock().unwrap();
+                    let mut decoder = inner.source.lock().unwrap();
+                    // let mut timestamp = inner.timestamp.lock().unwrap();
+                    let mut frame = decoder.decode_raw().unwrap();
+                    // let first = &frame.data(0)[0..16];
+                    // info!(message = "popping frame", bytes = ?first, frame = ?*timestamp);
+                    let mut scaler = frame.converter(Pixel::RGBA).unwrap();
+                    let mut rgbframe = FVideo::empty();
+                    // let time = frame.timestamp().unwrap();
+                    let _ = scaler.run(&mut frame, &mut rgbframe).unwrap();
+                    let pts = frame.pts();
+                    let ts = frame.timestamp();
+                    info!(?pts, ?ts);
+                    // somehow 0 is just the right index?
+                    // https://docs.rs/ffmpeg-next/7.0.4/src/dump_frames/dump-frames.rs.html#64
+                    let frame = rgbframe.data(0);
+                    let actual = frame.to_vec();
+                    // let wrapped = Arc::new(Mutex::new(actual));
+                    // let dur = Duration::from_nanos(time as u64);
+                    // *timestamp = dur.into();
+                    inner.upload_frame.swap(true, Ordering::AcqRel);
+                    actual
+                };
+                inner.frame = frame;
                 let redraw_interval = 1.0 / inner.framerate;
                 let until_redraw =
                     redraw_interval - (now - inner.next_redraw).as_secs_f32() % redraw_interval;

@@ -4,6 +4,7 @@ use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
 };
+use tracing::info;
 
 #[repr(C)]
 struct Uniforms {
@@ -264,18 +265,13 @@ impl VideoPipeline {
 #[derive(Debug, Clone)]
 pub(crate) struct VideoPrimitive {
     video_id: u64,
-    frame: Arc<Mutex<Vec<u8>>>,
+    frame: Vec<u8>,
     size: (u32, u32),
     upload_frame: bool,
 }
 
 impl VideoPrimitive {
-    pub fn new(
-        video_id: u64,
-        frame: Arc<Mutex<Vec<u8>>>,
-        size: (u32, u32),
-        upload_frame: bool,
-    ) -> Self {
+    pub fn new(video_id: u64, frame: Vec<u8>, size: (u32, u32), upload_frame: bool) -> Self {
         VideoPrimitive {
             video_id,
             frame,
@@ -301,15 +297,13 @@ impl Primitive for VideoPrimitive {
         }
 
         let pipeline = storage.get_mut::<VideoPipeline>().unwrap();
-
+        // let data = self.frame.lock().expect("lock frame mutex");
+        let frame = self.frame.as_slice();
+        let first = &frame[0..16];
+        let length = frame.len();
         if self.upload_frame {
-            pipeline.upload(
-                device,
-                queue,
-                self.video_id,
-                self.size,
-                self.frame.lock().expect("lock frame mutex").as_slice(),
-            );
+            // info!(message = "preparing frame draw", data = ?first, length);
+            pipeline.upload(device, queue, self.video_id, self.size, frame);
         }
 
         pipeline.prepare(queue, self.video_id, bounds);

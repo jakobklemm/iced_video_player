@@ -1,5 +1,6 @@
 use crate::Error;
 use ffmpeg_next::format::Pixel;
+use ffmpeg_next::Rational;
 use iced::widget::image as img;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -44,11 +45,12 @@ pub(crate) struct Internal {
 
     pub(crate) duration: Time,
 
-    pub timestamp: Arc<Mutex<i64>>,
-    pub format: Pixel,
+    pub timestamp: i64,
+    //pub timestamp: Duration,
+    // pub timebase: Rational,
 
     // Really ???
-    pub(crate) frame: Arc<Mutex<Vec<u8>>>, // ideally would be Arc<Mutex<[T]>>
+    pub(crate) frame: Vec<u8>, // ideally would be Arc<Mutex<[T]>>
     pub(crate) upload_frame: Arc<AtomicBool>,
 
     // pub(crate) wait: mpsc::Receiver<()>,
@@ -118,11 +120,12 @@ impl Video {
             // maybe live / not real?
             return Err(Error::Unknown);
         }
-        let frame_buf = vec![0; (width * height * 4) as _];
-        let frame = source.decode_raw()?;
-        let format = frame.format();
-        let frame = Arc::new(Mutex::new(frame_buf));
-        let frame_ref = Arc::clone(&frame);
+        // let frame_buf = vec![0; (width * height * 4) as _];
+        // let frame = source.decode_raw()?;
+        // let frame = Arc::new(Mutex::new(frame_buf));
+        let timestamp = 0;
+        // let timebase = source.time_base();
+        // let frame_ref = Arc::clone(&frame);
 
         info!(
             message = "creating video element",
@@ -133,17 +136,19 @@ impl Video {
         );
 
         let upload = AtomicBool::new(true);
+        let count = width * height * 4;
 
         Ok(Video(RefCell::new(Internal {
             id,
             source: Arc::new(Mutex::new(source)),
             upload_frame: Arc::new(upload),
-            timestamp: Arc::new(Mutex::new(0)),
+            timestamp,
+            // timestamp: Duration::from_millis(0),
+            // timebase,
             width,
-            format,
             height,
             duration,
-            frame,
+            frame: Vec::with_capacity(count as usize),
             framerate,
             paused: false,
             is_eos: false,
@@ -188,13 +193,12 @@ impl Video {
     }
 
     /// Get the current playback position in time.
-    /// TODO:
     pub fn position(&self) -> Duration {
         let inner = self.0.borrow();
-        let time = inner.timestamp.lock().unwrap();
-        let time = time.clone();
-        // TODO: Can panic
-        Duration::from_millis(time as u64)
+        let rate = inner.framerate;
+        let data = inner.timestamp as f32;
+        let time = data / rate;
+        Duration::from_secs_f32(time)
     }
 
     /// Get the media duration.
