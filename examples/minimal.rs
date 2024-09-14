@@ -6,6 +6,7 @@ use iced_video_player::{Video, VideoPlayer};
 use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
+use video_rs::Location;
 
 fn main() {
     let _ = tracing_subscriber::fmt()
@@ -44,8 +45,8 @@ impl Sandbox for App {
         //         .unwrap(),
         // )
         // .unwrap();
-        let video =
-            Video::new(&"file:/home/jeykey/Videos/video.mp4".parse::<Url>().unwrap()).unwrap();
+        let path = Location::File("/home/jeykey/Videos/video.mp4".into());
+        let video = Video::new(&path).unwrap();
         App {
             video,
             position: 0.0,

@@ -2,13 +2,11 @@ use crate::Error;
 use ffmpeg_next::format::Pixel;
 use ffmpeg_next::frame::Video as FVideo;
 use ffmpeg_next::Rational;
-use iced::widget::image as img;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tracing::{info, instrument};
-use video_rs::hwaccel::HardwareAccelerationDeviceType;
 
 /// Position in the media.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -103,7 +101,6 @@ impl Internal {
         self.paused = paused;
     }
 
-    #[instrument]
     pub(crate) fn next_frame(&mut self) -> Result<(), Error> {
         let start = Instant::now();
         let mut frame = self.source.decode_raw()?;
@@ -121,6 +118,7 @@ impl Internal {
         let mil = dur.as_millis();
         let dur = dur.as_secs_f64();
         info!(message = "new frame", time = ?dur, millis = ?mil);
+        // println!("frame time: {:?}, millis: {:?}", dur, mil);
         Ok(())
     }
 }
@@ -140,13 +138,12 @@ impl Video {
     /// Create a new video player from a given video which loads from `uri`.
     /// Note that live sourced will report the duration to be zero.
     #[instrument]
-    pub fn new(uri: &url::Url) -> Result<Self, Error> {
+    pub fn new(location: &Location) -> Result<Self, Error> {
         // ffmpeg settings setup?
         video_rs::init()?;
 
         let id = VIDEO_ID.fetch_add(1, Ordering::SeqCst);
-        let path: Location = uri.into();
-        let source = Decoder::new(path)?;
+        let source = Decoder::new(location)?;
         let (width, height) = source.size_out();
         let framerate = source.frame_rate() as f64;
         let duration = source.duration()?;
