@@ -33,7 +33,7 @@ impl From<i64> for Position {
     }
 }
 
-use video_rs::{Decoder, Location, Time};
+use video_rs::{Decoder, Time};
 
 pub(crate) struct Internal {
     pub(crate) id: u64,
