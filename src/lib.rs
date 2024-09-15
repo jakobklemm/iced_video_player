@@ -46,6 +46,7 @@ mod video;
 mod video_player;
 
 use std::sync::PoisonError;
+pub use video_rs::Location;
 
 use thiserror::Error;
 
