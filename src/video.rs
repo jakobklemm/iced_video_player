@@ -8,6 +8,8 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{info, instrument};
 
+pub use video_rs::Location;
+
 /// Position in the media.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Position {
