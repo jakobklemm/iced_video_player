@@ -1,10 +1,8 @@
 use iced_wgpu::primitive::pipeline::Primitive;
 use iced_wgpu::wgpu;
-use std::{
-    borrow::Borrow,
-    collections::BTreeMap,
-    sync::{Arc, Mutex},
-};
+use kanal::Sender;
+use parking_lot::Mutex;
+use std::{collections::BTreeMap, sync::Arc};
 use tracing::info;
 
 #[repr(C)]
@@ -263,16 +261,18 @@ impl VideoPipeline {
     }
 }
 
+type FrameI = Arc<Mutex<Vec<u8>>>;
+
 #[derive(Debug, Clone)]
 pub(crate) struct VideoPrimitive {
     video_id: u64,
-    frame: Arc<[u8]>,
+    frame: FrameI,
     size: (u32, u32),
     upload_frame: bool,
 }
 
 impl VideoPrimitive {
-    pub fn new(video_id: u64, frame: Arc<[u8]>, size: (u32, u32), upload_frame: bool) -> Self {
+    pub fn new(video_id: u64, frame: FrameI, size: (u32, u32), upload_frame: bool) -> Self {
         VideoPrimitive {
             video_id,
             frame,
@@ -298,12 +298,12 @@ impl Primitive for VideoPrimitive {
         }
 
         let pipeline = storage.get_mut::<VideoPipeline>().unwrap();
-        // let data = self.frame.lock().expect("lock frame mutex");
+        let data = self.frame.lock();
         // let frame = self.frame.as_slice();
         if self.upload_frame {
             // info!(message = "preparing frame draw", data = ?first, length);
-            let frame = self.frame.borrow();
-            pipeline.upload(device, queue, self.video_id, self.size, frame);
+            // let frame = self.frame.borrow();
+            pipeline.upload(device, queue, self.video_id, self.size, &data);
         } else {
             info!(message = "upload frame is false");
         }

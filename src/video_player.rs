@@ -6,10 +6,8 @@ use iced::{
     Element,
 };
 use iced_wgpu::primitive::pipeline::Renderer as PrimitiveRenderer;
-use std::{
-    marker::PhantomData,
-    sync::{atomic::Ordering, Mutex},
-};
+use parking_lot::Mutex;
+use std::{marker::PhantomData, sync::atomic::Ordering};
 use std::{sync::Arc, time::Duration};
 use tracing::{error, info};
 use video_rs::ffmpeg::{codec::Flags, format::Pixel};
@@ -120,11 +118,10 @@ where
             layout.bounds(),
             VideoPrimitive::new(
                 inner.id,
-                // TODO: Very bad
-                inner.frame.clone(),
-                // wrapped,
+                // clone is on arc
+                inner.shared.frame.clone(),
                 (inner.width as _, inner.height as _),
-                inner.upload_frame.swap(false, Ordering::SeqCst),
+                inner.shared.draw.swap(false, Ordering::SeqCst),
             ),
         );
     }
@@ -143,18 +140,14 @@ where
         let mut inner = self.video.0.borrow_mut();
 
         if let iced::Event::Window(_, iced::window::Event::RedrawRequested(now)) = event {
-            if !inner.is_eos && !inner.paused {
+            let paused = inner.shared.paused.load(Ordering::SeqCst);
+            if !paused {
                 let redraw_interval = 1.0 / inner.framerate;
                 let until_redraw =
                     redraw_interval - (now - inner.next_redraw).as_secs_f64() % redraw_interval;
-                // info!(
-                //     message = "drawing next frame in iced event",
-                //     ?redraw_interval,
-                //     ?until_redraw
-                // );
                 inner.next_redraw = now + Duration::from_secs_f64(until_redraw);
+                inner.next_redraw = inner.next_redraw;
 
-                inner.next_frame().unwrap();
                 shell.request_redraw(iced::window::RedrawRequest::At(inner.next_redraw));
 
                 if let Some(on_new_frame) = self.on_new_frame.clone() {

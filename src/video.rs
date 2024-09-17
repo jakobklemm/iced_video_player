@@ -2,9 +2,12 @@ use crate::Error;
 use ffmpeg_next::format::Pixel;
 use ffmpeg_next::frame::Video as FVideo;
 use ffmpeg_next::Rational;
+use kanal::{Receiver, Sender};
+use parking_lot::Mutex;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tracing::{info, instrument};
 
@@ -38,30 +41,109 @@ use video_rs::{Decoder, Time};
 pub(crate) struct Internal {
     pub(crate) id: u64,
 
-    // is this really the best solution?
-    //pub(crate) source: Arc<Mutex<Decoder>>,
-    pub(crate) source: Decoder,
-
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) framerate: f64,
 
     pub(crate) duration: Time,
 
-    pub timestamp: Time,
+    // pub timestamp: Time,
     pub timebase: Rational,
 
     // Really ???
-    pub(crate) frame: Arc<[u8]>,
-    pub(crate) upload_frame: Arc<AtomicBool>,
+    // pub(crate) frame: Arc<[u8]>,
+    // pub(crate) upload_frame: Arc<AtomicBool>,
+    pub shared: Arc<Shared>,
+    // pub send: Sender<()>,
 
     // pub(crate) wait: mpsc::Receiver<()>,
-    pub(crate) paused: bool,
+    // pub(crate) paused: bool,
     // pub(crate) muted: bool,
     // pub(crate) looping: bool,
-    pub(crate) is_eos: bool,
+    // pub(crate) is_eos: bool,
     // pub(crate) restart_stream: bool,
     pub(crate) next_redraw: Instant,
+}
+
+/// TODO: See if one Mutex for all fields would still be fast enough for individiual accesses
+pub struct Shared {
+    pub frame: Arc<Mutex<Vec<u8>>>,
+    decoder: Arc<Mutex<Decoder>>,
+    pub timestamp: Arc<Mutex<Time>>,
+    pub paused: AtomicBool,
+    // next: Receiver<()>,
+    pub base: Rational,
+    pub draw: AtomicBool,
+}
+
+impl Shared {
+    fn run(shared: Arc<Shared>) -> JoinHandle<()> {
+        thread::spawn(move || {
+            let shared = shared.clone();
+            loop {
+                if shared.paused.load(Ordering::SeqCst) {
+                    // nothing
+                } else {
+                    // TODO: handle error
+                    let _ = shared.next();
+                }
+            }
+            // channel has been dropped
+        })
+    }
+
+    fn next(&self) -> Result<(), Error> {
+        let start = Instant::now();
+        let mut raw = {
+            let mut decoder = self.decoder.lock();
+            let raw = decoder.decode_raw()?;
+            raw
+        };
+        let decode = Instant::now();
+        let pts = (*raw).pts();
+        let mut scaler = raw.converter(Pixel::RGBA).unwrap();
+        let mut converted = FVideo::empty();
+        let _ = scaler.run(&mut raw, &mut converted).unwrap();
+        {
+            let time = Time::new(pts, self.base);
+            let mut timestamp = self.timestamp.lock();
+            *timestamp = time;
+        }
+        let scale = Instant::now();
+        // TODO: try if &[u8] is possible
+        let mut frame = self.frame.lock();
+        *frame = converted.data(0).to_vec();
+        let end = Instant::now();
+        let decode = decode - start;
+        let convert = scale - decode;
+        let assign = end - scale;
+        let total = end - start;
+        println!(
+            "decode={:?}, convert={:?}, assign={:?}, total={:?}",
+            decode, convert, assign, total
+        );
+
+        self.draw.store(true, Ordering::SeqCst);
+
+        Ok(())
+    }
+
+    fn seek(&self, position: impl Into<Position>) -> Result<(), Error> {
+        let mut decoder = self.decoder.lock();
+        // currently not setting the timestamp, gets set at next draw call
+        // let mut timestamp = self.timestamp.lock();
+        match position.into() {
+            Position::Time(dur) => {
+                let millis = dur.as_millis();
+                let int: i64 = millis.try_into()?;
+                decoder.seek(int)?;
+            }
+            Position::Frame(frame) => {
+                decoder.seek_to_frame(frame)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 use std::fmt::Debug;
@@ -72,56 +154,27 @@ impl Debug for Internal {
         let height = self.height;
         let rate = self.framerate;
         let dur = self.duration;
-        let pos = self.timestamp.as_secs_f64();
-        write!(f, "Internal id={id}, width={width}, height={height}, rate={rate}, duration={dur}, timestamp={pos}")
+        // let pos = self.timestamp.as_secs_f64();
+        write!(
+            f,
+            "Internal id={id}, width={width}, height={height}, rate={rate}, duration={dur}"
+        )
     }
 }
 
 impl Internal {
     pub(crate) fn seek(&mut self, position: impl Into<Position>) -> Result<(), Error> {
-        match position.into() {
-            Position::Time(dur) => {
-                let millis = dur.as_millis();
-                let int: i64 = millis.try_into()?;
-                self.source.seek(int)?;
-            }
-            Position::Frame(frame) => {
-                self.source.seek_to_frame(frame)?;
-            }
-        }
-        Ok(())
+        self.shared.seek(position)
     }
 
     pub(crate) fn restart_stream(&mut self) -> Result<(), Error> {
         self.set_paused(false);
-        // self.is_eos = false;
-        self.source.seek_to_start()?;
+        self.shared.decoder.lock().seek_to_start()?;
         Ok(())
     }
 
     pub(crate) fn set_paused(&mut self, paused: bool) {
-        self.paused = paused;
-    }
-
-    pub(crate) fn next_frame(&mut self) -> Result<(), Error> {
-        let start = Instant::now();
-        let mut frame = self.source.decode_raw()?;
-        let pts = frame.pts();
-        let mut scaler = frame.converter(Pixel::RGBA).unwrap();
-        let mut converted = FVideo::empty();
-        let _ = scaler.run(&mut frame, &mut converted).unwrap();
-        let time = Time::new(pts, self.timebase);
-        self.timestamp = time;
-        // TODO: try if &[u8] is possible
-        self.frame = converted.data(0).to_vec().into();
-        self.upload_frame.swap(true, Ordering::SeqCst);
-        let end = Instant::now();
-        let dur = end - start;
-        let mil = dur.as_millis();
-        let dur = dur.as_secs_f64();
-        info!(message = "new frame", time = ?dur, millis = ?mil);
-        // println!("frame time: {:?}, millis: {:?}", dur, mil);
-        Ok(())
+        self.shared.paused.store(paused, Ordering::SeqCst);
     }
 }
 
@@ -130,7 +183,7 @@ pub struct Video(pub(crate) RefCell<Internal>);
 
 impl Drop for Video {
     fn drop(&mut self) {
-        // TODO: ???
+        // TODO: terminate thread
     }
 }
 
@@ -145,18 +198,22 @@ impl Video {
         video_rs::init()?;
 
         let id = VIDEO_ID.fetch_add(1, Ordering::SeqCst);
-        let source = Decoder::new(location)?;
-        let (width, height) = source.size_out();
-        let framerate = source.frame_rate() as f64;
-        let duration = source.duration()?;
+        let mut decoder = Decoder::new(location)?;
+        let (width, height) = decoder.size_out();
+        let framerate = decoder.frame_rate() as f64;
+        let duration = decoder.duration()?;
         if !duration.has_value() {
             // maybe live / not real?
             return Err(Error::Unknown);
         }
         // let frame_buf = vec![0; (width * height * 4) as _];
-        // let frame = source.decode_raw()?;
+        let mut raw = decoder.decode_raw()?;
+        let mut scaler = raw.converter(Pixel::RGBA).unwrap();
+        let mut converted = FVideo::empty();
+        let _ = scaler.run(&mut raw, &mut converted).unwrap();
+
         // let frame = Arc::new(Mutex::new(frame_buf));
-        let timebase = source.time_base();
+        let timebase = decoder.time_base();
         let timestamp = Time::new(None, timebase.clone());
 
         info!(
@@ -169,22 +226,35 @@ impl Video {
         );
 
         let upload = AtomicBool::new(true);
-        let count = width * height * 4;
-        let frame = Vec::with_capacity(count as usize);
+        // let count = width * height * 4;
+        // let frame = Vec::with_capacity(count as usize);
+
+        // don't buffer messages
+        // let (snd, recv) = kanal::bounded(0);
+
+        let shared = Shared {
+            frame: Arc::new(Mutex::new(converted.data(0).to_vec())),
+            decoder: Arc::new(Mutex::new(decoder)),
+            timestamp: Arc::new(Mutex::new(timestamp)),
+            paused: AtomicBool::new(false),
+            // next: recv,
+            base: timebase.clone(),
+            draw: upload,
+        };
+        let arcsh = Arc::new(shared);
+        Shared::run(arcsh.clone());
 
         Ok(Video(RefCell::new(Internal {
             id,
-            source,
-            upload_frame: Arc::new(upload),
-            timestamp,
+            // timestamp,
             timebase,
             width,
             height,
             duration,
-            frame: frame.into(),
+            // send: snd,
+            shared: arcsh,
             framerate,
-            paused: false,
-            is_eos: false,
+            // paused: false,
             next_redraw: Instant::now(),
         })))
     }
@@ -202,10 +272,10 @@ impl Video {
     }
 
     /// Get if the stream ended or not.
-    #[inline(always)]
-    pub fn eos(&self) -> bool {
-        self.0.borrow().is_eos
-    }
+    // #[inline(always)]
+    // pub fn eos(&self) -> bool {
+    //     self.0.borrow().is_eos
+    // }
 
     /// Set if the media is paused or not.
     pub fn set_paused(&mut self, paused: bool) {
@@ -216,7 +286,7 @@ impl Video {
     /// Get if the media is paused or not.
     #[inline(always)]
     pub fn paused(&self) -> bool {
-        self.0.borrow().paused
+        self.0.borrow().shared.paused.load(Ordering::SeqCst)
     }
 
     /// Jumps to a specific position in the media.
@@ -228,7 +298,8 @@ impl Video {
     /// Get the current playback position in time.
     pub fn position(&self) -> Duration {
         let inner = self.0.borrow();
-        inner.timestamp.into()
+        let timestamp = inner.shared.timestamp.lock();
+        (*timestamp).into()
     }
 
     /// Get the media duration.

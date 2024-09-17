@@ -25,6 +25,8 @@ url = "2" # media uri
 video-rs = { version = "0.9.0", features = ["ndarray"] }
 tracing = "0.1.40"
 ffmpeg-next = "7.0.4"
+parking_lot = "0.12.3"
+kanal = "0.1.0-pre8"
 
 [dev-dependencies]
 tracing-subscriber = "0.3.18"
