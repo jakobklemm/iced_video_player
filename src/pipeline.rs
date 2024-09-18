@@ -298,16 +298,13 @@ impl Primitive for VideoPrimitive {
         }
 
         let pipeline = storage.get_mut::<VideoPipeline>().unwrap();
-        let data = self.frame.lock();
         // let frame = self.frame.as_slice();
         if self.upload_frame {
             // info!(message = "preparing frame draw", data = ?first, length);
             // let frame = self.frame.borrow();
+            let data = self.frame.lock();
             pipeline.upload(device, queue, self.video_id, self.size, &data);
-        } else {
-            info!(message = "upload frame is false");
         }
-
         pipeline.prepare(queue, self.video_id, bounds);
     }
 

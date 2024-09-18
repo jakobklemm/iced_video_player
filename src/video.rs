@@ -9,9 +9,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
+use video_rs::hwaccel::HardwareAccelerationDeviceType;
 
-use video_rs::Location;
+use video_rs::{DecoderBuilder, Location, Resize};
 
 /// Position in the media.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -54,7 +55,8 @@ pub(crate) struct Internal {
     // pub(crate) frame: Arc<[u8]>,
     // pub(crate) upload_frame: Arc<AtomicBool>,
     pub shared: Arc<Shared>,
-    // pub send: Sender<()>,
+    // to notify the thread that a new frame can be drawn
+    pub send: Sender<()>,
 
     // pub(crate) wait: mpsc::Receiver<()>,
     // pub(crate) paused: bool,
@@ -71,7 +73,7 @@ pub struct Shared {
     decoder: Arc<Mutex<Decoder>>,
     pub timestamp: Arc<Mutex<Time>>,
     pub paused: AtomicBool,
-    // next: Receiver<()>,
+    next: Receiver<()>,
     pub base: Rational,
     pub draw: AtomicBool,
 }
@@ -82,24 +84,27 @@ impl Shared {
             let shared = shared.clone();
             loop {
                 if shared.paused.load(Ordering::SeqCst) {
-                    // nothing
+                    // wait on this thread before rechecking pause
+                    let _ = shared.next.recv();
+                } else if !shared.draw.load(Ordering::SeqCst) {
+                    match shared.next() {
+                        Ok(_) => {}
+                        Err(_) => {
+                            shared.paused.store(true, Ordering::SeqCst);
+                        }
+                    }
                 } else {
-                    // TODO: handle error
-                    let _ = shared.next();
                 }
             }
-            // channel has been dropped
         })
     }
 
     fn next(&self) -> Result<(), Error> {
-        let start = Instant::now();
         let mut raw = {
             let mut decoder = self.decoder.lock();
             let raw = decoder.decode_raw()?;
             raw
         };
-        let decode = Instant::now();
         let pts = (*raw).pts();
         let mut scaler = raw.converter(Pixel::RGBA).unwrap();
         let mut converted = FVideo::empty();
@@ -109,19 +114,8 @@ impl Shared {
             let mut timestamp = self.timestamp.lock();
             *timestamp = time;
         }
-        let scale = Instant::now();
-        // TODO: try if &[u8] is possible
         let mut frame = self.frame.lock();
         *frame = converted.data(0).to_vec();
-        let end = Instant::now();
-        let decode = decode - start;
-        let convert = scale - decode;
-        let assign = end - scale;
-        let total = end - start;
-        println!(
-            "decode={:?}, convert={:?}, assign={:?}, total={:?}",
-            decode, convert, assign, total
-        );
 
         self.draw.store(true, Ordering::SeqCst);
 
@@ -175,6 +169,7 @@ impl Internal {
 
     pub(crate) fn set_paused(&mut self, paused: bool) {
         self.shared.paused.store(paused, Ordering::SeqCst);
+        let _ = self.send.send(());
     }
 }
 
@@ -198,7 +193,26 @@ impl Video {
         video_rs::init()?;
 
         let id = VIDEO_ID.fetch_add(1, Ordering::SeqCst);
-        let mut decoder = Decoder::new(location)?;
+        let hw = HardwareAccelerationDeviceType::list_available();
+        info!(message = "available hardware", ?hw);
+        let mut decoder = if hw.contains(&HardwareAccelerationDeviceType::Cuda) {
+            DecoderBuilder::new(location)
+                .with_resize(Resize::Fit(720, 720))
+                .with_hardware_acceleration(HardwareAccelerationDeviceType::Cuda)
+                .build()?
+        } else if hw.len() != 0 {
+            let hardware = hw.first().unwrap();
+            DecoderBuilder::new(location)
+                .with_resize(Resize::Fit(720, 720))
+                .with_hardware_acceleration(*hardware)
+                .build()?
+        } else {
+            // if not cuda just use fallback first element
+            warn!("no hardware acceleration found, video playback might not be real time");
+            DecoderBuilder::new(location)
+                .with_resize(Resize::Fit(720, 720))
+                .build()?
+        };
         let (width, height) = decoder.size_out();
         let framerate = decoder.frame_rate() as f64;
         let duration = decoder.duration()?;
@@ -230,14 +244,14 @@ impl Video {
         // let frame = Vec::with_capacity(count as usize);
 
         // don't buffer messages
-        // let (snd, recv) = kanal::bounded(0);
+        let (snd, recv) = kanal::bounded(0);
 
         let shared = Shared {
             frame: Arc::new(Mutex::new(converted.data(0).to_vec())),
             decoder: Arc::new(Mutex::new(decoder)),
             timestamp: Arc::new(Mutex::new(timestamp)),
             paused: AtomicBool::new(false),
-            // next: recv,
+            next: recv,
             base: timebase.clone(),
             draw: upload,
         };
@@ -251,7 +265,7 @@ impl Video {
             width,
             height,
             duration,
-            // send: snd,
+            send: snd,
             shared: arcsh,
             framerate,
             // paused: false,
