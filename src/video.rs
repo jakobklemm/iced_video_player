@@ -193,18 +193,20 @@ impl Video {
         video_rs::init()?;
 
         let id = VIDEO_ID.fetch_add(1, Ordering::SeqCst);
-        let hw = HardwareAccelerationDeviceType::list_available();
-        info!(message = "available hardware", ?hw);
-        let mut decoder = if hw.contains(&HardwareAccelerationDeviceType::Cuda) {
+        // this doesn't work, because it will panic in an unimplemented()! on windows on newer
+        // ffmpeg versions, cause why bother providing stable APIs?
+        // let hw = HardwareAccelerationDeviceType::list_available();
+        let cuda = HardwareAccelerationDeviceType::Cuda;
+        let dx = HardwareAccelerationDeviceType::Dxva2;
+        let mut decoder = if cuda.is_available() {
             DecoderBuilder::new(location)
                 .with_resize(Resize::Fit(720, 720))
-                .with_hardware_acceleration(HardwareAccelerationDeviceType::Cuda)
+                .with_hardware_acceleration(cuda)
                 .build()?
-        } else if hw.len() != 0 {
-            let hardware = hw.first().unwrap();
+        } else if dx.is_available() {
             DecoderBuilder::new(location)
                 .with_resize(Resize::Fit(720, 720))
-                .with_hardware_acceleration(*hardware)
+                .with_hardware_acceleration(dx)
                 .build()?
         } else {
             // if not cuda just use fallback first element
