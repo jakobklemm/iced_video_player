@@ -1,6 +1,6 @@
 use iced::{
     widget::{Button, Column, Row, Slider, Text},
-    Element, Sandbox,
+    Element,
 };
 use iced_video_player::{Video, VideoPlayer};
 use std::time::Duration;

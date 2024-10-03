@@ -1,9 +1,7 @@
-use iced_wgpu::primitive::pipeline::Primitive;
 use iced_wgpu::wgpu;
-use kanal::Sender;
+use iced_wgpu::{graphics::Viewport, primitive::Primitive};
 use parking_lot::Mutex;
 use std::{collections::BTreeMap, sync::Arc};
-use tracing::info;
 
 #[repr(C)]
 struct Uniforms {
@@ -285,13 +283,14 @@ impl VideoPrimitive {
 impl Primitive for VideoPrimitive {
     fn prepare(
         &self,
-        format: wgpu::TextureFormat,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        bounds: iced::Rectangle,
-        _target_size: iced::Size<u32>,
-        _scale_factor: f32,
-        storage: &mut iced_wgpu::primitive::pipeline::Storage,
+        format: wgpu::TextureFormat,
+        storage: &mut iced_wgpu::primitive::Storage,
+        bounds: &iced::Rectangle,
+        viewport: &Viewport,
+        // _target_size: iced::Size<u32>,
+        // _scale_factor: f32,
     ) {
         if !storage.has::<VideoPipeline>() {
             storage.store(VideoPipeline::new(device, format));
@@ -305,18 +304,18 @@ impl Primitive for VideoPrimitive {
             let data = self.frame.lock();
             pipeline.upload(device, queue, self.video_id, self.size, &data);
         }
-        pipeline.prepare(queue, self.video_id, bounds);
+        pipeline.prepare(queue, self.video_id, *bounds);
     }
 
     fn render(
         &self,
-        storage: &iced_wgpu::primitive::pipeline::Storage,
-        target: &wgpu::TextureView,
-        _target_size: iced::Size<u32>,
-        viewport: iced::Rectangle<u32>,
         encoder: &mut wgpu::CommandEncoder,
+        storage: &iced_wgpu::primitive::Storage,
+        target: &wgpu::TextureView,
+        bounds: &iced::Rectangle<u32>, // _target_size: iced::Size<u32>,
+                                       // viewport: iced::Rectangle<u32>,
     ) {
         let pipeline = storage.get::<VideoPipeline>().unwrap();
-        pipeline.draw(target, encoder, viewport, self.video_id);
+        pipeline.draw(target, encoder, *bounds, self.video_id);
     }
 }

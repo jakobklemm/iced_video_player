@@ -16,9 +16,9 @@ exclude = [
 ]
 
 [dependencies]
-iced = { version = "0.12", features = ["image", "advanced", "wgpu"] } 
+iced = { version = "0.13.1", features = ["image", "advanced", "wgpu"] } 
 iced_native = "0.10"
-iced_wgpu = "0.12"
+iced_wgpu = "0.13.5"
 glib = "0.19" # gobject traits and error type
 thiserror = "1" 
 url = "2" # media uri

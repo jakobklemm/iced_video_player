@@ -5,7 +5,7 @@ use iced::{
     advanced::{self, graphics::core::event::Status, layout, widget, Widget},
     Element,
 };
-use iced_wgpu::primitive::pipeline::Renderer as PrimitiveRenderer;
+use iced_wgpu::primitive::Renderer as PrimitiveRenderer;
 use parking_lot::Mutex;
 use std::{marker::PhantomData, sync::atomic::Ordering};
 use std::{sync::Arc, time::Duration};
@@ -114,7 +114,7 @@ where
         _viewport: &iced::Rectangle,
     ) {
         let inner = self.video.0.borrow();
-        renderer.draw_pipeline_primitive(
+        renderer.draw_primitive(
             layout.bounds(),
             VideoPrimitive::new(
                 inner.id,
@@ -139,7 +139,7 @@ where
     ) -> Status {
         let mut inner = self.video.0.borrow_mut();
 
-        if let iced::Event::Window(_, iced::window::Event::RedrawRequested(now)) = event {
+        if let iced::Event::Window(iced::window::Event::RedrawRequested(now)) = event {
             let paused = inner.shared.paused.load(Ordering::SeqCst);
             if !paused {
                 let redraw_interval = 1.0 / inner.framerate;
